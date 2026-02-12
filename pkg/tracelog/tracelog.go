@@ -28,6 +28,9 @@ type traceState struct {
 }
 
 var (
+	defaultTracePath  = "./operator-trace.json"
+	fallbackTracePath = "/tmp/operator-trace.json"
+
 	fileOnce   sync.Once
 	filePath   string
 	fileErr    error
@@ -99,8 +102,21 @@ func Emit(ctx context.Context, logger logr.Logger, eventType string, details map
 }
 
 func enabled() bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv("TRACE_LOG_ENABLED")))
-	return v == "1" || v == "true" || v == "yes"
+	v, ok := os.LookupEnv("TRACE_LOG_ENABLED")
+	if !ok || strings.TrimSpace(v) == "" {
+		// Default to enabled so local runs work without extra env wiring.
+		return true
+	}
+
+	switch strings.TrimSpace(strings.ToLower(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		// Keep the default behavior for unknown values.
+		return true
+	}
 }
 
 func writeEvent(logger logr.Logger, event map[string]any) {
@@ -135,10 +151,16 @@ func ensureFile(logger logr.Logger) {
 	fileOnce.Do(func() {
 		filePath = os.Getenv("TRACE_LOG_PATH")
 		if filePath == "" {
-			filePath = fmt.Sprintf("operator-trace-%s.json", time.Now().Format("20060102-150405"))
+			filePath = defaultTracePath
 		}
 
-		f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		// Truncate per run so we always emit one valid JSON document.
+		f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil && filePath == defaultTracePath {
+			// If relative path is not writable in container cwd, fall back to /tmp.
+			filePath = fallbackTracePath
+			f, err = os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		}
 		if err != nil {
 			fileErr = err
 			logger.Error(err, "failed to open trace log file", "tracePath", filePath)
