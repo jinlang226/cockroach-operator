@@ -152,7 +152,7 @@ func (d decommission) Act(ctx context.Context, cluster *resource.Cluster, log lo
 		Drainer:   drainer,
 		PVCPruner: &pvcPruner,
 	}
-	tracelog.Emit(ctx, log, "DecommissionCommand", map[string]any{
+	tracelog.Emit(ctx, log, "EnsureScaleRequested", map[string]any{
 		"currentReplicas": status.CurrentReplicas,
 		"targetReplicas":  nodes,
 		"secure":          cluster.Spec().TLSEnabled,
@@ -160,7 +160,7 @@ func (d decommission) Act(ctx context.Context, cluster *resource.Cluster, log lo
 	if err := scaler.EnsureScale(ctx, nodes, *cluster.Spec().GRPCPort, utilfeature.DefaultMutableFeatureGate.Enabled(features.AutoPrunePVC)); err != nil {
 		/// now check if the decommissionStaleErr and update status
 		log.Error(err, "decommission failed")
-		tracelog.Emit(ctx, log, "DecommissionCommandReturn", map[string]any{
+		tracelog.Emit(ctx, log, "EnsureScaleResult", map[string]any{
 			"success": false,
 			"error":   err.Error(),
 		})
@@ -168,7 +168,7 @@ func (d decommission) Act(ctx context.Context, cluster *resource.Cluster, log lo
 		return err
 	}
 	// TO DO @alina we will need to save the status foreach action
-	tracelog.Emit(ctx, log, "DecommissionCommandReturn", map[string]any{
+	tracelog.Emit(ctx, log, "EnsureScaleResult", map[string]any{
 		"success": true,
 	})
 	cluster.SetTrue(api.DecommissionCondition)

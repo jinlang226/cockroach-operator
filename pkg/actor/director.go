@@ -18,6 +18,7 @@ package actor
 
 import (
 	"context"
+	"strings"
 
 	api "github.com/cockroachdb/cockroach-operator/apis/v1alpha1"
 	"github.com/cockroachdb/cockroach-operator/pkg/condition"
@@ -105,6 +106,7 @@ func (cd *clusterDirector) GetActorToExecute(ctx context.Context, cluster *resou
 	if ss.Spec.Replicas != nil {
 		specReplicas = *ss.Spec.Replicas
 	}
+	observedTLSEnabled := observedStatefulSetTLSEnabled(ss)
 	tracelog.Emit(ctx, log, "StatefulSetStatusObserved", map[string]any{
 		"statefulSetFound":  statefulSetFound,
 		"currentReplicas":   ss.Status.CurrentReplicas,
@@ -113,6 +115,7 @@ func (cd *clusterDirector) GetActorToExecute(ctx context.Context, cluster *resou
 		"updatedReplicas":   ss.Status.UpdatedReplicas,
 		"availableReplicas": ss.Status.AvailableReplicas,
 		"specReplicas":      specReplicas,
+		"tlsEnabled":        observedTLSEnabled,
 	})
 
 	needsDecommission := cd.needsDecommission(cluster, ss)
@@ -153,6 +156,17 @@ func (cd *clusterDirector) GetActorToExecute(ctx context.Context, cluster *resou
 		"initialized": condition.True(api.CrdbInitializedCondition, cluster.Status().Conditions),
 		"result":      needsDeploy,
 	})
+	modelNeedsDeploy := !statefulSetFound || specReplicas != cluster.Spec().Nodes || observedTLSEnabled != cluster.Spec().TLSEnabled
+	tracelog.Emit(ctx, log, "NeedsDeployModelEvaluated", map[string]any{
+		"statefulSetFound":     statefulSetFound,
+		"specNodes":            cluster.Spec().Nodes,
+		"observedSpecReplicas": specReplicas,
+		"specReplicaMismatch":  specReplicas != cluster.Spec().Nodes,
+		"tlsEnabled":           cluster.Spec().TLSEnabled,
+		"observedTLSEnabled":   observedTLSEnabled,
+		"tlsMismatch":          observedTLSEnabled != cluster.Spec().TLSEnabled,
+		"result":               modelNeedsDeploy,
+	})
 	if needsDeploy {
 		return cd.actors[api.DeployAction], nil
 	}
@@ -174,6 +188,22 @@ func (cd *clusterDirector) GetActorToExecute(ctx context.Context, cluster *resou
 	}
 
 	return nil, nil
+}
+
+func observedStatefulSetTLSEnabled(ss *appsv1.StatefulSet) bool {
+	for _, volume := range ss.Spec.Template.Spec.Volumes {
+		if volume.Name == "certs" {
+			return true
+		}
+	}
+	for _, container := range ss.Spec.Template.Spec.Containers {
+		for _, cmdPart := range container.Command {
+			if strings.Contains(cmdPart, "--certs-dir=") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (cd *clusterDirector) needsRestart(cluster *resource.Cluster) bool {
