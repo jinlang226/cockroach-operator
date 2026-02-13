@@ -107,7 +107,11 @@ func (cd *clusterDirector) GetActorToExecute(ctx context.Context, cluster *resou
 		specReplicas = *ss.Spec.Replicas
 	}
 	observedTLSEnabled := observedStatefulSetTLSEnabled(ss)
-	tracelog.Emit(ctx, log, "StatefulSetStatusObserved", map[string]any{
+	tracelog.EmitComparable(ctx, log, "StatefulSetStatusObserved", map[string]any{
+		"statefulSetFound": statefulSetFound,
+		"specReplicas":     specReplicas,
+		"tlsEnabled":       observedTLSEnabled,
+	}, map[string]any{
 		"statefulSetFound":  statefulSetFound,
 		"currentReplicas":   ss.Status.CurrentReplicas,
 		"statusReplicas":    ss.Status.Replicas,
@@ -116,16 +120,21 @@ func (cd *clusterDirector) GetActorToExecute(ctx context.Context, cluster *resou
 		"availableReplicas": ss.Status.AvailableReplicas,
 		"specReplicas":      specReplicas,
 		"tlsEnabled":        observedTLSEnabled,
-	})
+	}, &tracelog.NondeterministicHints{K8s: []string{"statefulSetFound", "specReplicas", "tlsEnabled", "currentReplicas", "statusReplicas", "readyReplicas", "updatedReplicas", "availableReplicas"}})
 
 	needsDecommission := cd.needsDecommission(cluster, ss)
-	tracelog.Emit(ctx, log, "NeedsDecommissionEvaluated", map[string]any{
+	tracelog.EmitComparable(ctx, log, "NeedsDecommissionEvaluated", map[string]any{
+		"initialized":     condition.True(api.CrdbInitializedCondition, cluster.Status().Conditions),
+		"currentReplicas": ss.Status.CurrentReplicas,
+		"statusReplicas":  ss.Status.Replicas,
+		"targetReplicas":  cluster.Spec().Nodes,
+	}, map[string]any{
 		"initialized":     condition.True(api.CrdbInitializedCondition, cluster.Status().Conditions),
 		"currentReplicas": ss.Status.CurrentReplicas,
 		"statusReplicas":  ss.Status.Replicas,
 		"targetReplicas":  cluster.Spec().Nodes,
 		"result":          needsDecommission,
-	})
+	}, nil)
 	if needsDecommission {
 		return cd.actors[api.DecommissionAction], nil
 	}
@@ -150,32 +159,32 @@ func (cd *clusterDirector) GetActorToExecute(ctx context.Context, cluster *resou
 	if err != nil {
 		return nil, err
 	}
-	tracelog.Emit(ctx, log, "NeedsDeployEvaluated", map[string]any{
-		"specNodes":   cluster.Spec().Nodes,
-		"tlsEnabled":  cluster.Spec().TLSEnabled,
-		"initialized": condition.True(api.CrdbInitializedCondition, cluster.Status().Conditions),
-		"result":      needsDeploy,
-	})
 	modelNeedsDeploy := !statefulSetFound || specReplicas != cluster.Spec().Nodes || observedTLSEnabled != cluster.Spec().TLSEnabled
-	tracelog.Emit(ctx, log, "NeedsDeployModelEvaluated", map[string]any{
+	tracelog.EmitComparable(ctx, log, "NeedsDeployEvaluated", map[string]any{
 		"statefulSetFound":     statefulSetFound,
 		"specNodes":            cluster.Spec().Nodes,
 		"observedSpecReplicas": specReplicas,
-		"specReplicaMismatch":  specReplicas != cluster.Spec().Nodes,
 		"tlsEnabled":           cluster.Spec().TLSEnabled,
 		"observedTLSEnabled":   observedTLSEnabled,
-		"tlsMismatch":          observedTLSEnabled != cluster.Spec().TLSEnabled,
+	}, map[string]any{
+		"statefulSetFound":     statefulSetFound,
+		"specNodes":            cluster.Spec().Nodes,
+		"observedSpecReplicas": specReplicas,
+		"tlsEnabled":           cluster.Spec().TLSEnabled,
+		"observedTLSEnabled":   observedTLSEnabled,
 		"result":               modelNeedsDeploy,
-	})
+	}, nil)
 	if needsDeploy {
 		return cd.actors[api.DeployAction], nil
 	}
 
 	needsInitialization := cd.needsInitialization(cluster)
-	tracelog.Emit(ctx, log, "NeedsInitializationEvaluated", map[string]any{
+	tracelog.EmitComparable(ctx, log, "NeedsInitializationEvaluated", map[string]any{
+		"initialized": condition.True(api.CrdbInitializedCondition, cluster.Status().Conditions),
+	}, map[string]any{
 		"initialized": condition.True(api.CrdbInitializedCondition, cluster.Status().Conditions),
 		"result":      needsInitialization,
-	})
+	}, nil)
 	if needsInitialization {
 		return cd.actors[api.InitializeAction], nil
 	}

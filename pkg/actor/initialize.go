@@ -82,9 +82,12 @@ func (init initialize) Act(ctx context.Context, cluster *resource.Cluster, log l
 		log.Error(err, msg)
 		return errors.Wrap(err, msg)
 	}
-	tracelog.Emit(ctx, log, "StatefulSetContainersObserved", map[string]any{
-		"count": len(pods.Items),
-	})
+	details := map[string]any{"success": true, "count": len(pods.Items)}
+	if len(pods.Items) > 0 {
+		details["firstPodName"] = pods.Items[0].Name
+		details["firstPodPhase"] = string(pods.Items[0].Status.Phase)
+	}
+	tracelog.EmitComparable(ctx, log, "StatefulSetContainersObserved", map[string]any{}, details, &tracelog.NondeterministicHints{K8s: []string{"count", "firstPodName", "firstPodPhase"}})
 
 	if len(pods.Items) == 0 {
 		return NotReadyErr{Err: errors.New("pod not created")}
@@ -92,11 +95,6 @@ func (init initialize) Act(ctx context.Context, cluster *resource.Cluster, log l
 
 	phase := pods.Items[0].Status.Phase
 	podName := pods.Items[0].Name
-	tracelog.Emit(ctx, log, "StatefulSetContainersObserved", map[string]any{
-		"count":         len(pods.Items),
-		"firstPodName":  podName,
-		"firstPodPhase": string(phase),
-	})
 	if phase != corev1.PodRunning {
 		return NotReadyErr{Err: errors.New("pod is not running")}
 	}
@@ -112,14 +110,16 @@ func (init initialize) Act(ctx context.Context, cluster *resource.Cluster, log l
 	}
 
 	log.V(DEBUGLEVEL).Info(fmt.Sprintf("Executing init in pod %s with phase %s", podName, phase))
-	tracelog.Emit(ctx, log, "CockroachOperatorStatusBeforeUpdate", map[string]any{
-		"initialized": condition.True(api.CrdbInitializedCondition, cluster.Status().Conditions),
-	})
-	tracelog.Emit(ctx, log, "NodeInitCommand", map[string]any{
+	statusBeforeUpdate := condition.True(api.CrdbInitializedCondition, cluster.Status().Conditions)
+	tracelog.EmitComparable(ctx, log, "CockroachOperatorStatusBeforeUpdate", map[string]any{
+		"initialized": statusBeforeUpdate,
+	}, map[string]any{
+		"initialized": statusBeforeUpdate,
+	}, &tracelog.NondeterministicHints{K8s: []string{"initialized"}})
+	tracelog.EmitComparable(ctx, log, "NodeInitCommand", map[string]any{}, map[string]any{
 		"podName": podName,
 		"secure":  cluster.Spec().TLSEnabled,
-		"command": "cockroach init",
-	})
+	}, &tracelog.NondeterministicHints{K8s: []string{"podName"}})
 	_, stderr, err := kube.ExecInPod(ctx, init.scheme, init.config, cluster.Namespace(),
 		fmt.Sprintf("%s-0", stsName), resource.DbContainerName, cmd)
 	log.V(DEBUGLEVEL).Info("Executed init in pod")
@@ -129,34 +129,36 @@ func (init initialize) Act(ctx context.Context, cluster *resource.Cluster, log l
 		if strings.Contains(err.Error(), "unable to upgrade connection: container not found") ||
 			strings.Contains(err.Error(), "does not have a host assigned") {
 			log.V(DEBUGLEVEL).Info("pod has not completely started")
-			tracelog.Emit(ctx, log, "NodeInitCommandReturn", map[string]any{
-				"success": false,
-				"status":  "not_ready",
-				"error":   err.Error(),
-			})
+			tracelog.EmitComparable(ctx, log, "NodeInitCommandReturn", map[string]any{
+				"error": "PENDING",
+			}, map[string]any{
+				"error": "NODE_INIT_ERROR",
+			}, &tracelog.NondeterministicHints{Client: []string{"error"}})
 			return NotReadyErr{Err: errors.New("pod has not completely started")}
 		}
 
 		msg := "failed to initialize the cluster"
 		log.Error(err, msg)
-		tracelog.Emit(ctx, log, "NodeInitCommandReturn", map[string]any{
-			"success": false,
-			"status":  "error",
-			"error":   err.Error(),
-		})
+		tracelog.EmitComparable(ctx, log, "NodeInitCommandReturn", map[string]any{
+			"error": "PENDING",
+		}, map[string]any{
+			"error": "NODE_INIT_ERROR",
+		}, &tracelog.NondeterministicHints{Client: []string{"error"}})
 		return errors.Wrap(err, msg)
 	}
 
 	if err != nil && alreadyInitialized(stderr) {
-		tracelog.Emit(ctx, log, "NodeInitCommandReturn", map[string]any{
-			"success": true,
-			"status":  "already_initialized",
-		})
+		tracelog.EmitComparable(ctx, log, "NodeInitCommandReturn", map[string]any{
+			"error": "PENDING",
+		}, map[string]any{
+			"error": "NODE_ALREADY_INITIALIZED",
+		}, &tracelog.NondeterministicHints{Client: []string{"error"}})
 	} else {
-		tracelog.Emit(ctx, log, "NodeInitCommandReturn", map[string]any{
-			"success": true,
-			"status":  "ok",
-		})
+		tracelog.EmitComparable(ctx, log, "NodeInitCommandReturn", map[string]any{
+			"error": "PENDING",
+		}, map[string]any{
+			"error": "NODE_INIT_OK",
+		}, &tracelog.NondeterministicHints{Client: []string{"error"}})
 	}
 
 	// If we got here, we need to update the CrdbClusterStatus object with an updated CrdbInitialized condition.
@@ -183,9 +185,11 @@ func (init initialize) Act(ctx context.Context, cluster *resource.Cluster, log l
 			log.Error(err, msg)
 			return errors.Wrap(err, msg)
 		}
-		tracelog.Emit(ctx, log, "CockroachOperatorStatusAfterUpdate", map[string]any{
+		tracelog.EmitComparable(ctx, log, "CockroachOperatorStatusAfterUpdate", map[string]any{
+			"initialized": statusBeforeUpdate,
+		}, map[string]any{
 			"initialized": condition.True(api.CrdbInitializedCondition, refreshedCluster.Status().Conditions),
-		})
+		}, &tracelog.NondeterministicHints{K8s: []string{"initialized"}})
 		return err
 	})
 	if err != nil {

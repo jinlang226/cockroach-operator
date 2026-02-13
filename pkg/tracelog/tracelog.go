@@ -27,9 +27,13 @@ type traceState struct {
 	mu          sync.Mutex
 }
 
+type NondeterministicHints struct {
+	K8s    []string
+	Client []string
+}
+
 var (
-	defaultTracePrefix = "operator-trace"
-	defaultTimeLayout  = "20060102-150405"
+	defaultTraceFilename = "operator-trace.json"
 
 	fileOnce   sync.Once
 	filePath   string
@@ -101,6 +105,48 @@ func Emit(ctx context.Context, logger logr.Logger, eventType string, details map
 	writeEvent(logger, entry)
 }
 
+func EmitComparable(ctx context.Context, logger logr.Logger, eventType string, before map[string]any, after map[string]any, hints *NondeterministicHints) {
+	if after == nil {
+		after = map[string]any{}
+	}
+	if before == nil {
+		before = map[string]any{}
+	}
+
+	details := cloneMap(after)
+	details["before"] = cloneMap(before)
+	details["after"] = cloneMap(after)
+
+	if hints != nil {
+		nondet := map[string]any{}
+		if len(hints.K8s) > 0 {
+			nondet["k8s"] = cloneStringSlice(hints.K8s)
+		}
+		if len(hints.Client) > 0 {
+			nondet["client"] = cloneStringSlice(hints.Client)
+		}
+		if len(nondet) > 0 {
+			details["nondeterministic"] = nondet
+		}
+	}
+
+	Emit(ctx, logger, eventType, details)
+}
+
+func cloneMap(input map[string]any) map[string]any {
+	out := make(map[string]any, len(input))
+	for k, v := range input {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneStringSlice(input []string) []string {
+	out := make([]string, len(input))
+	copy(out, input)
+	return out
+}
+
 func enabled() bool {
 	v, ok := os.LookupEnv("TRACE_LOG_ENABLED")
 	if !ok || strings.TrimSpace(v) == "" {
@@ -152,14 +198,14 @@ func ensureFile(logger logr.Logger) {
 		filePath = os.Getenv("TRACE_LOG_PATH")
 		useGeneratedDefault := filePath == ""
 		if useGeneratedDefault {
-			filePath = defaultTracePath()
+			filePath = defaultTracePath
 		}
 
 		// Truncate per run so we always emit one valid JSON document.
 		f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 		if err != nil && useGeneratedDefault {
 			// If relative path is not writable in container cwd, fall back to /tmp.
-			filePath = fallbackTracePath()
+			filePath = fallbackTracePath
 			f, err = os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 		}
 		if err != nil {
@@ -190,43 +236,10 @@ func ensureFile(logger logr.Logger) {
 	}
 }
 
-func defaultTracePath() string {
-	return "./" + traceFilename()
-}
-
-func fallbackTracePath() string {
-	return "/tmp/" + traceFilename()
-}
-
-func traceFilename() string {
-	ts := time.Now().Format(defaultTimeLayout)
-	suffix := sanitizeSuffix(os.Getenv("TRACE_LOG_SUFFIX"))
-	if suffix == "" {
-		return fmt.Sprintf("%s-%s.json", defaultTracePrefix, ts)
-	}
-	return fmt.Sprintf("%s-%s-%s.json", defaultTracePrefix, suffix, ts)
-}
-
-func sanitizeSuffix(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-
-	b := strings.Builder{}
-	for _, r := range raw {
-		if (r >= 'a' && r <= 'z') ||
-			(r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') ||
-			r == '-' || r == '_' || r == '.' {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('-')
-		}
-	}
-
-	return strings.Trim(b.String(), "-")
-}
+var (
+	defaultTracePath  = "./" + defaultTraceFilename
+	fallbackTracePath = "/tmp/" + defaultTraceFilename
+)
 
 func startSignalHandler(logger logr.Logger) {
 	sigOnce.Do(func() {

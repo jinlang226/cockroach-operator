@@ -73,11 +73,13 @@ func (s *Scaler) EnsureScale(ctx context.Context, scale uint, gRPCPort int32, pr
 	if err != nil {
 		return err
 	}
-	tracelog.Emit(ctx, s.Logger, "StatefulSetStatusObserved", map[string]any{
+	tracelog.EmitComparable(ctx, s.Logger, "StatefulSetStatusObserved", map[string]any{
+		"currentReplicas": crdbScale,
+	}, map[string]any{
 		"phase":           "ensure_scale_start",
 		"currentReplicas": crdbScale,
 		"targetReplicas":  scale,
-	})
+	}, &tracelog.NondeterministicHints{K8s: []string{"currentReplicas"}})
 
 	// TODO (chrisseto): To mitigate some of the issues with adding multiple clusters at a time we should
 	// set kv.snapshot_rebalance.max_rate and kv.snapshot_rebalance.max_rate to ~2MB.
@@ -98,27 +100,36 @@ func (s *Scaler) EnsureScale(ctx context.Context, scale uint, gRPCPort int32, pr
 			return err
 		}
 
-		tracelog.Emit(ctx, s.Logger, "StatefulSetUpdateRequested", map[string]any{
+		tracelog.EmitComparable(ctx, s.Logger, "StatefulSetUpdateRequested", map[string]any{
+			"fromReplicas": crdbScale,
+		}, map[string]any{
 			"phase":          "scale_down",
 			"fromReplicas":   crdbScale,
 			"targetReplicas": oneOff,
-		})
+		}, nil)
 		if err := s.CRDB.SetReplicas(ctx, oneOff); err != nil {
-			tracelog.Emit(ctx, s.Logger, "StatefulSetUpdateResult", map[string]any{
+			tracelog.EmitComparable(ctx, s.Logger, "StatefulSetUpdateResult", map[string]any{
+				"phase":   "scale_down",
+				"success": true,
+			}, map[string]any{
 				"phase":   "scale_down",
 				"success": false,
-				"error":   err.Error(),
-			})
+			}, &tracelog.NondeterministicHints{K8s: []string{"success"}})
 			return err
 		}
-		tracelog.Emit(ctx, s.Logger, "StatefulSetUpdated", map[string]any{
+		tracelog.EmitComparable(ctx, s.Logger, "StatefulSetUpdated", map[string]any{
+			"replicas": crdbScale,
+		}, map[string]any{
 			"phase":    "scale_down",
 			"replicas": oneOff,
-		})
-		tracelog.Emit(ctx, s.Logger, "StatefulSetUpdateResult", map[string]any{
+		}, nil)
+		tracelog.EmitComparable(ctx, s.Logger, "StatefulSetUpdateResult", map[string]any{
+			"phase":   "scale_down",
+			"success": false,
+		}, map[string]any{
 			"phase":   "scale_down",
 			"success": true,
-		})
+		}, &tracelog.NondeterministicHints{K8s: []string{"success"}})
 
 		if err := s.CRDB.WaitUntilHealthy(ctx, oneOff); err != nil {
 			return err
@@ -127,11 +138,13 @@ func (s *Scaler) EnsureScale(ctx context.Context, scale uint, gRPCPort int32, pr
 		if crdbScale, err = s.CRDB.Replicas(ctx); err != nil {
 			return err
 		}
-		tracelog.Emit(ctx, s.Logger, "StatefulSetStatusObserved", map[string]any{
+		tracelog.EmitComparable(ctx, s.Logger, "StatefulSetStatusObserved", map[string]any{
+			"targetReplicas": scale,
+		}, map[string]any{
 			"phase":           "scale_down_observed",
 			"currentReplicas": crdbScale,
 			"targetReplicas":  scale,
-		})
+		}, &tracelog.NondeterministicHints{K8s: []string{"currentReplicas"}})
 	}
 
 	// Scale up one node at a time to:
@@ -164,27 +177,36 @@ func (s *Scaler) EnsureScale(ctx context.Context, scale uint, gRPCPort int32, pr
 	for crdbScale < scale {
 		s.Logger.V(int(zapcore.DebugLevel)).Info("scaling up stateful set", "have", crdbScale, "want", (crdbScale + 1))
 		oneOff := crdbScale + 1
-		tracelog.Emit(ctx, s.Logger, "StatefulSetUpdateRequested", map[string]any{
+		tracelog.EmitComparable(ctx, s.Logger, "StatefulSetUpdateRequested", map[string]any{
+			"fromReplicas": crdbScale,
+		}, map[string]any{
 			"phase":          "scale_up",
 			"fromReplicas":   crdbScale,
 			"targetReplicas": oneOff,
-		})
+		}, nil)
 		if err := s.CRDB.SetReplicas(ctx, oneOff); err != nil {
-			tracelog.Emit(ctx, s.Logger, "StatefulSetUpdateResult", map[string]any{
+			tracelog.EmitComparable(ctx, s.Logger, "StatefulSetUpdateResult", map[string]any{
+				"phase":   "scale_up",
+				"success": true,
+			}, map[string]any{
 				"phase":   "scale_up",
 				"success": false,
-				"error":   err.Error(),
-			})
+			}, &tracelog.NondeterministicHints{K8s: []string{"success"}})
 			return err
 		}
-		tracelog.Emit(ctx, s.Logger, "StatefulSetUpdated", map[string]any{
+		tracelog.EmitComparable(ctx, s.Logger, "StatefulSetUpdated", map[string]any{
+			"replicas": crdbScale,
+		}, map[string]any{
 			"phase":    "scale_up",
 			"replicas": oneOff,
-		})
-		tracelog.Emit(ctx, s.Logger, "StatefulSetUpdateResult", map[string]any{
+		}, nil)
+		tracelog.EmitComparable(ctx, s.Logger, "StatefulSetUpdateResult", map[string]any{
+			"phase":   "scale_up",
+			"success": false,
+		}, map[string]any{
 			"phase":   "scale_up",
 			"success": true,
-		})
+		}, &tracelog.NondeterministicHints{K8s: []string{"success"}})
 
 		// Wait for the newly requested pod to be scheduled and running
 		if err := s.CRDB.WaitUntilRunning(ctx); err != nil {
@@ -205,11 +227,13 @@ func (s *Scaler) EnsureScale(ctx context.Context, scale uint, gRPCPort int32, pr
 		if crdbScale, err = s.CRDB.Replicas(ctx); err != nil {
 			return err
 		}
-		tracelog.Emit(ctx, s.Logger, "StatefulSetStatusObserved", map[string]any{
+		tracelog.EmitComparable(ctx, s.Logger, "StatefulSetStatusObserved", map[string]any{
+			"targetReplicas": scale,
+		}, map[string]any{
 			"phase":           "scale_up_observed",
 			"currentReplicas": crdbScale,
 			"targetReplicas":  scale,
-		})
+		}, &tracelog.NondeterministicHints{K8s: []string{"currentReplicas"}})
 	}
 
 	// NB: We may be able to remove the scheduler entirely once this change is

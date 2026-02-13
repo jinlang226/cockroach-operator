@@ -78,19 +78,18 @@ func (d decommission) Act(ctx context.Context, cluster *resource.Cluster, log lo
 	nodes := uint(cluster.Spec().Nodes)
 	log.Info("replicas decommissioning", "status.CurrentReplicas", status.CurrentReplicas, "expected", cluster.Spec().Nodes)
 	if status.CurrentReplicas <= cluster.Spec().Nodes {
-		tracelog.Emit(ctx, log, "DecommissionSkipped", map[string]any{
-			"currentReplicas": status.CurrentReplicas,
-			"targetReplicas":  cluster.Spec().Nodes,
-		})
 		return nil
 	}
 	// Model side selects executor pod 0 and a target pod before issuing decommission commands.
-	tracelog.Emit(ctx, log, "StatefulSetContainersObserved", map[string]any{
+	tracelog.EmitComparable(ctx, log, "StatefulSetContainersObserved", map[string]any{
+		"count": status.CurrentReplicas,
+	}, map[string]any{
+		"success":         true,
 		"phase":           "decommission_prepare",
 		"count":           status.CurrentReplicas,
 		"executorOrdinal": 0,
 		"targetOrdinal":   status.CurrentReplicas - 1,
-	})
+	}, &tracelog.NondeterministicHints{K8s: []string{"count"}})
 	// test to see if we are running inside of Kubernetes
 	// If we are running inside of k8s we will not find this file.
 	runningInsideK8s := inK8s("/var/run/secrets/kubernetes.io/serviceaccount/token")
@@ -152,25 +151,12 @@ func (d decommission) Act(ctx context.Context, cluster *resource.Cluster, log lo
 		Drainer:   drainer,
 		PVCPruner: &pvcPruner,
 	}
-	tracelog.Emit(ctx, log, "EnsureScaleRequested", map[string]any{
-		"currentReplicas": status.CurrentReplicas,
-		"targetReplicas":  nodes,
-		"secure":          cluster.Spec().TLSEnabled,
-	})
 	if err := scaler.EnsureScale(ctx, nodes, *cluster.Spec().GRPCPort, utilfeature.DefaultMutableFeatureGate.Enabled(features.AutoPrunePVC)); err != nil {
 		/// now check if the decommissionStaleErr and update status
 		log.Error(err, "decommission failed")
-		tracelog.Emit(ctx, log, "EnsureScaleResult", map[string]any{
-			"success": false,
-			"error":   err.Error(),
-		})
 		cluster.SetFalse(api.DecommissionCondition)
 		return err
 	}
-	// TO DO @alina we will need to save the status foreach action
-	tracelog.Emit(ctx, log, "EnsureScaleResult", map[string]any{
-		"success": true,
-	})
 	cluster.SetTrue(api.DecommissionCondition)
 	log.V(DEBUGLEVEL).Info("decommission completed", "cond", ss.Status.Conditions)
 	return nil

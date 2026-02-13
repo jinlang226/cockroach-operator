@@ -72,10 +72,10 @@ func (d deploy) Act(ctx context.Context, cluster *resource.Cluster, log logr.Log
 	for _, b := range builders {
 		isStatefulSetBuilder := strings.Contains(strings.ToLower(b.ResourceName()), "cockroachdb")
 		if isStatefulSetBuilder {
-			tracelog.Emit(ctx, log, "StatefulSetUpdateRequested", map[string]any{
+			tracelog.EmitComparable(ctx, log, "StatefulSetUpdateRequested", map[string]any{}, map[string]any{
 				"targetReplicas": cluster.Spec().Nodes,
 				"tlsEnabled":     cluster.Spec().TLSEnabled,
-			})
+			}, nil)
 		}
 		changed, err := resource.Reconciler{
 			ManagedResource: r,
@@ -86,23 +86,26 @@ func (d deploy) Act(ctx context.Context, cluster *resource.Cluster, log logr.Log
 
 		if err != nil {
 			if isStatefulSetBuilder {
-				tracelog.Emit(ctx, log, "StatefulSetUpdateResult", map[string]any{
+				tracelog.EmitComparable(ctx, log, "StatefulSetUpdateResult", map[string]any{
+					"success": true,
+				}, map[string]any{
 					"success": false,
-					"error":   err.Error(),
-				})
+				}, &tracelog.NondeterministicHints{K8s: []string{"success"}})
 			}
 			return errors.Wrapf(err, "failed to reconcile %s", b.ResourceName())
 		}
 
 		if changed {
 			if isStatefulSetBuilder {
-				tracelog.Emit(ctx, log, "StatefulSetUpdated", map[string]any{
-					"replicas": cluster.Spec().Nodes,
+				tracelog.EmitComparable(ctx, log, "StatefulSetUpdated", map[string]any{}, map[string]any{
+					"replicas":   cluster.Spec().Nodes,
 					"tlsEnabled": cluster.Spec().TLSEnabled,
-				})
-				tracelog.Emit(ctx, log, "StatefulSetUpdateResult", map[string]any{
+				}, nil)
+				tracelog.EmitComparable(ctx, log, "StatefulSetUpdateResult", map[string]any{
+					"success": false,
+				}, map[string]any{
 					"success": true,
-				})
+				}, &tracelog.NondeterministicHints{K8s: []string{"success"}})
 			}
 			log.Info("created/updated a resource, stopping request processing", "resource", b.ResourceName())
 			return nil
