@@ -28,8 +28,8 @@ type traceState struct {
 }
 
 var (
-	defaultTracePath  = "./operator-trace.json"
-	fallbackTracePath = "/tmp/operator-trace.json"
+	defaultTracePrefix = "operator-trace"
+	defaultTimeLayout  = "20060102-150405"
 
 	fileOnce   sync.Once
 	filePath   string
@@ -150,15 +150,16 @@ func writeEvent(logger logr.Logger, event map[string]any) {
 func ensureFile(logger logr.Logger) {
 	fileOnce.Do(func() {
 		filePath = os.Getenv("TRACE_LOG_PATH")
-		if filePath == "" {
-			filePath = defaultTracePath
+		useGeneratedDefault := filePath == ""
+		if useGeneratedDefault {
+			filePath = defaultTracePath()
 		}
 
 		// Truncate per run so we always emit one valid JSON document.
 		f, err := os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
-		if err != nil && filePath == defaultTracePath {
+		if err != nil && useGeneratedDefault {
 			// If relative path is not writable in container cwd, fall back to /tmp.
-			filePath = fallbackTracePath
+			filePath = fallbackTracePath()
 			f, err = os.OpenFile(filePath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 		}
 		if err != nil {
@@ -187,6 +188,44 @@ func ensureFile(logger logr.Logger) {
 	if fileErr != nil {
 		logger.Error(fileErr, "trace file unavailable", "tracePath", filePath)
 	}
+}
+
+func defaultTracePath() string {
+	return "./" + traceFilename()
+}
+
+func fallbackTracePath() string {
+	return "/tmp/" + traceFilename()
+}
+
+func traceFilename() string {
+	ts := time.Now().Format(defaultTimeLayout)
+	suffix := sanitizeSuffix(os.Getenv("TRACE_LOG_SUFFIX"))
+	if suffix == "" {
+		return fmt.Sprintf("%s-%s.json", defaultTracePrefix, ts)
+	}
+	return fmt.Sprintf("%s-%s-%s.json", defaultTracePrefix, suffix, ts)
+}
+
+func sanitizeSuffix(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	b := strings.Builder{}
+	for _, r := range raw {
+		if (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('-')
+		}
+	}
+
+	return strings.Trim(b.String(), "-")
 }
 
 func startSignalHandler(logger logr.Logger) {
