@@ -29,7 +29,6 @@ import (
 	"github.com/cockroachdb/cockroach-operator/pkg/util"
 	"github.com/cockroachdb/errors"
 	"github.com/go-logr/logr"
-	"github.com/lithammer/shortuuid/v3"
 	"go.uber.org/zap/zapcore"
 	appsv1 "k8s.io/api/apps/v1"
 	kbatch "k8s.io/api/batch/v1"
@@ -107,7 +106,7 @@ func (r *ClusterReconciler) Reconcile(ctx context.Context, req reconcile.Request
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Hour)
 	defer cancel()
 
-	reconcileID := shortuuid.New()
+	reconcileID := tracelog.NextReconcileID(req.Namespace, req.Name)
 	log := r.Log.WithValues("CrdbCluster", req.NamespacedName, "ReconcileId", reconcileID)
 	log.V(int(zapcore.InfoLevel)).Info("reconciling CockroachDB cluster")
 

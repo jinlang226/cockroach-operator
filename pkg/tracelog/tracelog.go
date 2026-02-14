@@ -44,7 +44,18 @@ var (
 	fileMu     sync.Mutex
 	closeOnce  sync.Once
 	sigOnce    sync.Once
+
+	reconcileSeqMu sync.Mutex
+	reconcileSeq   = map[string]int{}
 )
+
+func NextReconcileID(namespace string, name string) string {
+	key := fmt.Sprintf("%s/%s", namespace, name)
+	reconcileSeqMu.Lock()
+	defer reconcileSeqMu.Unlock()
+	reconcileSeq[key]++
+	return fmt.Sprintf("%s#%d", key, reconcileSeq[key])
+}
 
 func WithTraceState(ctx context.Context, namespace string, name string, generation int64, reconcileID string) context.Context {
 	traceID := fmt.Sprintf("%s/%s-%d", namespace, name, time.Now().UnixNano())
