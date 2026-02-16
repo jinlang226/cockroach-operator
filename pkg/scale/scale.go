@@ -38,6 +38,35 @@ type Scaler struct {
 	PVCPruner PVCPruner
 }
 
+func emitScaleStatefulSetStatusObserved(ctx context.Context, logger logr.Logger, phase string, currentReplicas uint, targetReplicas uint) {
+	current := int(currentReplicas)
+	target := int(targetReplicas)
+
+	tracelog.EmitComparable(ctx, logger, "StatefulSetStatusObserved", map[string]any{
+		"phase":           phase,
+		"currentReplicas": current,
+		"targetReplicas":  target,
+	}, map[string]any{
+		"phase":             phase,
+		"statefulSetFound":  true,
+		"currentReplicas":   current,
+		"statusReplicas":    current,
+		"readyReplicas":     current,
+		"updatedReplicas":   current,
+		"availableReplicas": current,
+		"specReplicas":      current,
+		"targetReplicas":    target,
+	}, &tracelog.NondeterministicHints{K8s: []string{
+		"statefulSetFound",
+		"specReplicas",
+		"currentReplicas",
+		"statusReplicas",
+		"readyReplicas",
+		"updatedReplicas",
+		"availableReplicas",
+	}})
+}
+
 // EnsureScale gracefully adds or removes CRDB replicas from a given stateful
 // until it matches the given number. Removed nodes are drained of all replicas
 // before being removed from the CRDB cluster and their matching PVCs and PVs
@@ -73,13 +102,7 @@ func (s *Scaler) EnsureScale(ctx context.Context, scale uint, gRPCPort int32, pr
 	if err != nil {
 		return err
 	}
-	tracelog.EmitComparable(ctx, s.Logger, "StatefulSetStatusObserved", map[string]any{
-		"currentReplicas": crdbScale,
-	}, map[string]any{
-		"phase":           "ensure_scale_start",
-		"currentReplicas": crdbScale,
-		"targetReplicas":  scale,
-	}, &tracelog.NondeterministicHints{K8s: []string{"currentReplicas"}})
+	emitScaleStatefulSetStatusObserved(ctx, s.Logger, "ensure_scale_start", crdbScale, scale)
 
 	// TODO (chrisseto): To mitigate some of the issues with adding multiple clusters at a time we should
 	// set kv.snapshot_rebalance.max_rate and kv.snapshot_rebalance.max_rate to ~2MB.
@@ -134,18 +157,14 @@ func (s *Scaler) EnsureScale(ctx context.Context, scale uint, gRPCPort int32, pr
 		if err := s.CRDB.WaitUntilHealthy(ctx, oneOff); err != nil {
 			return err
 		}
+		emitScaleStatefulSetStatusObserved(ctx, s.Logger, "scale_down_wait_healthy", oneOff, scale)
 
 		if crdbScale, err = s.CRDB.Replicas(ctx); err != nil {
 			return err
 		}
-		tracelog.EmitComparable(ctx, s.Logger, "StatefulSetStatusObserved", map[string]any{
-			"targetReplicas": scale,
-		}, map[string]any{
-			"phase":           "scale_down_observed",
-			"currentReplicas": crdbScale,
-			"targetReplicas":  scale,
-		}, &tracelog.NondeterministicHints{K8s: []string{"currentReplicas"}})
+		emitScaleStatefulSetStatusObserved(ctx, s.Logger, "scale_down_observed", crdbScale, scale)
 	}
+	emitScaleStatefulSetStatusObserved(ctx, s.Logger, "post_scale_down_observed", crdbScale, scale)
 
 	// Scale up one node at a time to:
 	// 1. Mitigate race conditions.
@@ -217,6 +236,7 @@ func (s *Scaler) EnsureScale(ctx context.Context, scale uint, gRPCPort int32, pr
 		if err := s.CRDB.WaitUntilHealthy(ctx, oneOff); err != nil {
 			return err
 		}
+		emitScaleStatefulSetStatusObserved(ctx, s.Logger, "scale_up_wait_healthy", oneOff, scale)
 
 		// TODO wait for cluster to be rebalanced before proceeding.
 		// Uncertain how to tell when a cluster is actually rebalanced.
@@ -227,13 +247,7 @@ func (s *Scaler) EnsureScale(ctx context.Context, scale uint, gRPCPort int32, pr
 		if crdbScale, err = s.CRDB.Replicas(ctx); err != nil {
 			return err
 		}
-		tracelog.EmitComparable(ctx, s.Logger, "StatefulSetStatusObserved", map[string]any{
-			"targetReplicas": scale,
-		}, map[string]any{
-			"phase":           "scale_up_observed",
-			"currentReplicas": crdbScale,
-			"targetReplicas":  scale,
-		}, &tracelog.NondeterministicHints{K8s: []string{"currentReplicas"}})
+		emitScaleStatefulSetStatusObserved(ctx, s.Logger, "scale_up_observed", crdbScale, scale)
 	}
 
 	// NB: We may be able to remove the scheduler entirely once this change is

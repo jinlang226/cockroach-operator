@@ -69,6 +69,36 @@ func (d decommission) Act(ctx context.Context, cluster *resource.Cluster, log lo
 		return kube.IgnoreNotFound(err)
 	}
 	status := &ss.Status
+	var specReplicas int32
+	if ss.Spec.Replicas != nil {
+		specReplicas = *ss.Spec.Replicas
+	}
+	observedTLSEnabled := observedStatefulSetTLSEnabled(ss)
+	tracelog.EmitComparable(ctx, log, "StatefulSetStatusObserved", map[string]any{
+		"phase":            "decommission_precheck",
+		"statefulSetFound": true,
+		"specReplicas":     specReplicas,
+		"tlsEnabled":       observedTLSEnabled,
+	}, map[string]any{
+		"phase":             "decommission_precheck",
+		"statefulSetFound":  true,
+		"currentReplicas":   status.CurrentReplicas,
+		"statusReplicas":    status.Replicas,
+		"readyReplicas":     status.ReadyReplicas,
+		"updatedReplicas":   status.UpdatedReplicas,
+		"availableReplicas": status.AvailableReplicas,
+		"specReplicas":      specReplicas,
+		"tlsEnabled":        observedTLSEnabled,
+	}, &tracelog.NondeterministicHints{K8s: []string{
+		"statefulSetFound",
+		"specReplicas",
+		"tlsEnabled",
+		"currentReplicas",
+		"statusReplicas",
+		"readyReplicas",
+		"updatedReplicas",
+		"availableReplicas",
+	}})
 
 	if status.CurrentReplicas == 0 || status.CurrentReplicas < status.Replicas {
 		log.V(WARNLEVEL).Info("decommission statefulset does not have all replicas up")
