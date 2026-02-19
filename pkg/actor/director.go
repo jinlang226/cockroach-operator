@@ -107,11 +107,14 @@ func (cd *clusterDirector) GetActorToExecute(ctx context.Context, cluster *resou
 		specReplicas = *ss.Spec.Replicas
 	}
 	observedTLSEnabled := observedStatefulSetTLSEnabled(ss)
+	requestIndex := tracelog.NextStatefulSetRequestIndex(ctx)
 	tracelog.EmitComparable(ctx, log, "StatefulSetStatusObserved", map[string]any{
+		"requestIndex":     requestIndex,
 		"statefulSetFound": statefulSetFound,
 		"specReplicas":     specReplicas,
 		"tlsEnabled":       observedTLSEnabled,
 	}, map[string]any{
+		"requestIndex":      requestIndex,
 		"statefulSetFound":  statefulSetFound,
 		"currentReplicas":   ss.Status.CurrentReplicas,
 		"statusReplicas":    ss.Status.Replicas,

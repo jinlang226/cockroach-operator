@@ -74,12 +74,15 @@ func (d decommission) Act(ctx context.Context, cluster *resource.Cluster, log lo
 		specReplicas = *ss.Spec.Replicas
 	}
 	observedTLSEnabled := observedStatefulSetTLSEnabled(ss)
+	requestIndex := tracelog.NextStatefulSetRequestIndex(ctx)
 	tracelog.EmitComparable(ctx, log, "StatefulSetStatusObserved", map[string]any{
+		"requestIndex":     requestIndex,
 		"phase":            "decommission_precheck",
 		"statefulSetFound": true,
 		"specReplicas":     specReplicas,
 		"tlsEnabled":       observedTLSEnabled,
 	}, map[string]any{
+		"requestIndex":      requestIndex,
 		"phase":             "decommission_precheck",
 		"statefulSetFound":  true,
 		"currentReplicas":   status.CurrentReplicas,

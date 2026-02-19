@@ -41,12 +41,15 @@ type Scaler struct {
 func emitScaleStatefulSetStatusObserved(ctx context.Context, logger logr.Logger, phase string, currentReplicas uint, targetReplicas uint) {
 	current := int(currentReplicas)
 	target := int(targetReplicas)
+	requestIndex := tracelog.NextStatefulSetRequestIndex(ctx)
 
 	tracelog.EmitComparable(ctx, logger, "StatefulSetStatusObserved", map[string]any{
+		"requestIndex":    requestIndex,
 		"phase":           phase,
 		"currentReplicas": current,
 		"targetReplicas":  target,
 	}, map[string]any{
+		"requestIndex":      requestIndex,
 		"phase":             phase,
 		"statefulSetFound":  true,
 		"currentReplicas":   current,

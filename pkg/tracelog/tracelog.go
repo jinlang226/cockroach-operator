@@ -24,6 +24,7 @@ type traceState struct {
 	name        string
 	generation  int64
 	seq         int
+	stsGetSeq   int
 	mu          sync.Mutex
 }
 
@@ -67,6 +68,17 @@ func WithTraceState(ctx context.Context, namespace string, name string, generati
 		generation:  generation,
 	}
 	return context.WithValue(ctx, traceContextKey{}, state)
+}
+
+func NextStatefulSetRequestIndex(ctx context.Context) int {
+	state, ok := ctx.Value(traceContextKey{}).(*traceState)
+	if !ok || state == nil {
+		return 0
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	state.stsGetSeq++
+	return state.stsGetSeq
 }
 
 func Emit(ctx context.Context, logger logr.Logger, eventType string, details map[string]any) {
