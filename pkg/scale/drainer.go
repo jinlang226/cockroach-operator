@@ -168,7 +168,26 @@ func (d *CockroachNodeDrainer) makeDrainStatusChecker(id uint) func(ctx context.
 
 		record, err := r.Read()
 		if err != nil {
+			tracelog.EmitComparable(ctx, d.Logger, "DecommissionStatusObserved", map[string]any{}, map[string]any{
+				"success":           false,
+				"replicas":          0,
+				"isDecommissioning": false,
+				"ambiguousSchema":   true,
+			}, &tracelog.NondeterministicHints{Client: []string{"success", "replicas", "isDecommissioning", "ambiguousSchema"}})
 			return 0, errors.Wrapf(err, "failed to get node draining status, id=%d", id)
+		}
+
+		// The CSV schema is addressed by fixed column indexes. If the schema
+		// drifts (columns added or reordered), these indexes map the wrong
+		// fields. A short record means the assumed schema does not hold.
+		if len(record) <= 10 {
+			tracelog.EmitComparable(ctx, d.Logger, "DecommissionStatusObserved", map[string]any{}, map[string]any{
+				"success":           false,
+				"replicas":          0,
+				"isDecommissioning": false,
+				"ambiguousSchema":   true,
+			}, &tracelog.NondeterministicHints{Client: []string{"success", "replicas", "isDecommissioning", "ambiguousSchema"}})
+			return 0, errors.Newf("unexpected node status csv schema: got %d columns, expected at least 11", len(record))
 		}
 
 		isLive, replicasStr, isDecommissioning := record[8], record[9], record[10]
@@ -181,13 +200,26 @@ func (d *CockroachNodeDrainer) makeDrainStatusChecker(id uint) func(ctx context.
 			"isDecommissioning", isDecommissioning,
 		)
 
-		if isLive != "true" || isDecommissioning != "true" {
-			return 0, errors.New("unexpected node status")
+		replicas, parseErr := strconv.ParseUint(replicasStr, 10, 64)
+		if parseErr != nil {
+			tracelog.EmitComparable(ctx, d.Logger, "DecommissionStatusObserved", map[string]any{}, map[string]any{
+				"success":           false,
+				"replicas":          0,
+				"isDecommissioning": isDecommissioning == "true",
+				"ambiguousSchema":   true,
+			}, &tracelog.NondeterministicHints{Client: []string{"success", "replicas", "isDecommissioning", "ambiguousSchema"}})
+			return 0, errors.Wrap(parseErr, "failed to parse replicas number")
 		}
 
-		replicas, err := strconv.ParseUint(replicasStr, 10, 64)
-		if err != nil {
-			return 0, errors.Wrap(err, "failed to parse replicas number")
+		tracelog.EmitComparable(ctx, d.Logger, "DecommissionStatusObserved", map[string]any{}, map[string]any{
+			"success":           true,
+			"replicas":          int(replicas),
+			"isDecommissioning": isDecommissioning == "true",
+			"ambiguousSchema":   false,
+		}, &tracelog.NondeterministicHints{Client: []string{"success", "replicas", "isDecommissioning", "ambiguousSchema"}})
+
+		if isLive != "true" || isDecommissioning != "true" {
+			return 0, errors.New("unexpected node status")
 		}
 
 		return replicas, nil
