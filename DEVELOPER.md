@@ -204,3 +204,51 @@ order to keep those values up to date, we generate some configs using templates.
   `hack/crdbversions/main.go`.
 * Add the new template to the `targets` variable in `hack/crdbversions/main.go`.
 * Regenerate the outputs by running `make release/gen-templates`
+
+## Building Without Bazel (Bazel 9+ Workaround)
+
+`make dev/up` fails on Bazel 9 because the repo uses the old WORKSPACE style and Bazel 9 cannot resolve the `io_k8s_repo_infra` dependency. Use this path instead.
+
+**Step 1: Configure Docker for the local registry**
+
+```bash
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json <<'DOCKEREOF'
+{
+  "insecure-registries": ["registry.localhost:5002"]
+}
+DOCKEREOF
+sudo systemctl restart docker
+```
+
+**Step 2: Create the k3d cluster**
+
+```bash
+k3d cluster create dev \
+  --image rancher/k3s:v1.23.3-k3s1 \
+  --registry-create registry.localhost:5002
+```
+
+**Step 3: Build the operator binary**
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+  -o cockroach-operator-bin \
+  ./cmd/cockroach-operator
+```
+
+**Step 4: Build and push the image**
+
+```bash
+docker build -t registry.localhost:5002/cockroach-operator:v2.18.3 .
+docker push registry.localhost:5002/cockroach-operator:v2.18.3
+```
+
+**Step 5: Deploy using the install manifests**
+
+```bash
+kubectl apply -f install/crds.yaml
+
+sed 's|cockroachdb/cockroach-operator:v2.18.3|registry.localhost:5002/cockroach-operator:v2.18.3|g' \
+  install/operator.yaml | kubectl apply -f -
+```
