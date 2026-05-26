@@ -1,7 +1,6 @@
 package tracelog
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -40,7 +39,6 @@ var (
 	filePath   string
 	fileErr    error
 	file       *os.File
-	writer     *bufio.Writer
 	firstEvent bool
 	fileMu     sync.Mutex
 	closeOnce  sync.Once
@@ -190,29 +188,53 @@ func enabled() bool {
 
 func writeEvent(logger logr.Logger, event map[string]any) {
 	ensureFile(logger)
-	if file == nil || writer == nil {
+	if file == nil {
 		return
 	}
 
 	fileMu.Lock()
 	defer fileMu.Unlock()
 
+	data, err := json.Marshal(event)
+	if err != nil {
+		logger.Error(err, "failed to marshal trace event", "tracePath", filePath)
+		return
+	}
+
+	// Keep the file valid after every write by seeking back over the "\n]}\n"
+	// terminator written by ensureFile (and re-written after each event), then
+	// inserting the new event and re-writing the terminator. The file on disk
+	// is always parseable JSON even while the operator is running.
 	if !firstEvent {
-		if _, err := writer.WriteString(",\n"); err != nil {
+		// Seek back over the previous "\n]}\n" and add a comma separator.
+		if _, err := file.Seek(-4, 2); err != nil {
+			logger.Error(err, "failed to seek trace file", "tracePath", filePath)
+			return
+		}
+		if _, err := file.WriteString(",\n"); err != nil {
 			logger.Error(err, "failed to write trace separator", "tracePath", filePath)
+			return
+		}
+	} else {
+		// First event: seek back over the "\n]}\n" leaving just the header.
+		if _, err := file.Seek(-4, 2); err != nil {
+			logger.Error(err, "failed to seek trace file", "tracePath", filePath)
 			return
 		}
 	}
 	firstEvent = false
 
-	enc := json.NewEncoder(writer)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(event); err != nil {
+	if _, err := file.Write(data); err != nil {
 		logger.Error(err, "failed to write trace event", "tracePath", filePath)
 		return
 	}
-	if err := writer.Flush(); err != nil {
-		logger.Error(err, "failed to flush trace file", "tracePath", filePath)
+	// Re-write the terminator so the file stays valid.
+	if _, err := file.WriteString("\n]}\n"); err != nil {
+		logger.Error(err, "failed to write trace terminator", "tracePath", filePath)
+		return
+	}
+	if err := file.Sync(); err != nil {
+		logger.Error(err, "failed to sync trace file", "tracePath", filePath)
 	}
 }
 
@@ -237,17 +259,19 @@ func ensureFile(logger logr.Logger) {
 			return
 		}
 		file = f
-		writer = bufio.NewWriter(file)
 		firstEvent = true
 
-		if _, err := writer.WriteString("{\"events\":[\n"); err != nil {
+		// Write a complete, valid empty document. writeEvent seeks back over
+		// the "\n]}\n" terminator to insert events, then rewrites it, so the
+		// file on disk is always parseable even while the operator runs.
+		if _, err := file.WriteString("{\"events\":[\n]}\n"); err != nil {
 			fileErr = err
 			logger.Error(err, "failed to initialize trace file", "tracePath", filePath)
 			return
 		}
-		if err := writer.Flush(); err != nil {
+		if err := file.Sync(); err != nil {
 			fileErr = err
-			logger.Error(err, "failed to flush trace file header", "tracePath", filePath)
+			logger.Error(err, "failed to sync trace file header", "tracePath", filePath)
 			return
 		}
 		startSignalHandler(logger)
@@ -280,15 +304,12 @@ func Close(logger logr.Logger) {
 		fileMu.Lock()
 		defer fileMu.Unlock()
 
-		if writer != nil {
-			if _, err := writer.WriteString("]}\n"); err != nil {
-				logger.Error(err, "failed to finalize trace file", "tracePath", filePath)
-			}
-			if err := writer.Flush(); err != nil {
-				logger.Error(err, "failed to flush trace file", "tracePath", filePath)
-			}
-		}
+		// The file is kept valid after every event, so Close only needs to
+		// flush OS buffers and close the handle.
 		if file != nil {
+			if err := file.Sync(); err != nil {
+				logger.Error(err, "failed to sync trace file", "tracePath", filePath)
+			}
 			if err := file.Close(); err != nil {
 				logger.Error(err, "failed to close trace file", "tracePath", filePath)
 			}
