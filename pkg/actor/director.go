@@ -162,7 +162,6 @@ func (cd *clusterDirector) GetActorToExecute(ctx context.Context, cluster *resou
 	if err != nil {
 		return nil, err
 	}
-	modelNeedsDeploy := !statefulSetFound || specReplicas != cluster.Spec().Nodes || observedTLSEnabled != cluster.Spec().TLSEnabled
 	tracelog.EmitComparable(ctx, log, "NeedsDeployEvaluated", map[string]any{
 		"statefulSetFound":     statefulSetFound,
 		"specNodes":            cluster.Spec().Nodes,
@@ -175,7 +174,7 @@ func (cd *clusterDirector) GetActorToExecute(ctx context.Context, cluster *resou
 		"observedSpecReplicas": specReplicas,
 		"tlsEnabled":           cluster.Spec().TLSEnabled,
 		"observedTLSEnabled":   observedTLSEnabled,
-		"result":               modelNeedsDeploy,
+		"result":               needsDeploy,
 	}, nil)
 	if needsDeploy {
 		return cd.actors[api.DeployAction], nil

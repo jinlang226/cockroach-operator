@@ -134,6 +134,11 @@ func (init initialize) Act(ctx context.Context, cluster *resource.Cluster, log l
 			}, map[string]any{
 				"error": "NODE_INIT_ERROR",
 			}, &tracelog.NondeterministicHints{Client: []string{"error"}})
+			tracelog.EmitComparable(ctx, log, "CockroachOperatorStatusAfterUpdate", map[string]any{
+				"initialized": statusBeforeUpdate,
+			}, map[string]any{
+				"initialized": statusBeforeUpdate,
+			}, &tracelog.NondeterministicHints{K8s: []string{"initialized"}})
 			return NotReadyErr{Err: errors.New("pod has not completely started")}
 		}
 
@@ -144,6 +149,11 @@ func (init initialize) Act(ctx context.Context, cluster *resource.Cluster, log l
 		}, map[string]any{
 			"error": "NODE_INIT_ERROR",
 		}, &tracelog.NondeterministicHints{Client: []string{"error"}})
+		tracelog.EmitComparable(ctx, log, "CockroachOperatorStatusAfterUpdate", map[string]any{
+			"initialized": statusBeforeUpdate,
+		}, map[string]any{
+			"initialized": statusBeforeUpdate,
+		}, &tracelog.NondeterministicHints{K8s: []string{"initialized"}})
 		return errors.Wrap(err, msg)
 	}
 
