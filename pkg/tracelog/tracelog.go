@@ -43,6 +43,7 @@ var (
 	fileMu     sync.Mutex
 	closeOnce  sync.Once
 	sigOnce    sync.Once
+	events     []map[string]any
 
 	reconcileSeqMu sync.Mutex
 	reconcileSeq   = map[string]int{}
@@ -195,42 +196,24 @@ func writeEvent(logger logr.Logger, event map[string]any) {
 	fileMu.Lock()
 	defer fileMu.Unlock()
 
-	data, err := json.Marshal(event)
+	events = append(events, event)
+
+	data, err := json.MarshalIndent(map[string]any{"events": events}, "", "  ")
 	if err != nil {
-		logger.Error(err, "failed to marshal trace event", "tracePath", filePath)
+		logger.Error(err, "failed to marshal trace document", "tracePath", filePath)
 		return
 	}
 
-	// Keep the file valid after every write by seeking back over the "\n]}\n"
-	// terminator written by ensureFile (and re-written after each event), then
-	// inserting the new event and re-writing the terminator. The file on disk
-	// is always parseable JSON even while the operator is running.
-	if !firstEvent {
-		// Seek back over the previous "\n]}\n" and add a comma separator.
-		if _, err := file.Seek(-4, 2); err != nil {
-			logger.Error(err, "failed to seek trace file", "tracePath", filePath)
-			return
-		}
-		if _, err := file.WriteString(",\n"); err != nil {
-			logger.Error(err, "failed to write trace separator", "tracePath", filePath)
-			return
-		}
-	} else {
-		// First event: seek back over the "\n]}\n" leaving just the header.
-		if _, err := file.Seek(-4, 2); err != nil {
-			logger.Error(err, "failed to seek trace file", "tracePath", filePath)
-			return
-		}
+	if err := file.Truncate(0); err != nil {
+		logger.Error(err, "failed to truncate trace file", "tracePath", filePath)
+		return
 	}
-	firstEvent = false
-
+	if _, err := file.Seek(0, 0); err != nil {
+		logger.Error(err, "failed to seek trace file", "tracePath", filePath)
+		return
+	}
 	if _, err := file.Write(data); err != nil {
-		logger.Error(err, "failed to write trace event", "tracePath", filePath)
-		return
-	}
-	// Re-write the terminator so the file stays valid.
-	if _, err := file.WriteString("\n]}\n"); err != nil {
-		logger.Error(err, "failed to write trace terminator", "tracePath", filePath)
+		logger.Error(err, "failed to write trace file", "tracePath", filePath)
 		return
 	}
 	if err := file.Sync(); err != nil {
@@ -259,12 +242,9 @@ func ensureFile(logger logr.Logger) {
 			return
 		}
 		file = f
-		firstEvent = true
+		events = nil
 
-		// Write a complete, valid empty document. writeEvent seeks back over
-		// the "\n]}\n" terminator to insert events, then rewrites it, so the
-		// file on disk is always parseable even while the operator runs.
-		if _, err := file.WriteString("{\"events\":[\n]}\n"); err != nil {
+		if _, err := file.WriteString("{\"events\":[]}\n"); err != nil {
 			fileErr = err
 			logger.Error(err, "failed to initialize trace file", "tracePath", filePath)
 			return
